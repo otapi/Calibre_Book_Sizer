@@ -1,0 +1,15 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Calibre Plugin ZIP",
+      "type": "shell",
+      "command": "zip -r Calibre_Book_Sizer.zip __init__.py action.py images/",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}
