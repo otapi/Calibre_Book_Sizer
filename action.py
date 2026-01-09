@@ -1,15 +1,14 @@
 from calibre.gui2.actions import InterfaceAction
-from calibre.gui2 import error_dialog, info_dialog, question_dialog, demonstrate
+from calibre.gui2 import error_dialog, info_dialog, question_dialog
+from calibre_plugins.modify_epub.common_icons import set_plugin_icon_resources, get_icon
 from calibre.gui2 import open_url
 from calibre.utils.config import JSONConfig
 
 from PyQt5.Qt import QIcon
+import re
 
 PLUGIN_NAME = 'Book Sizer'
-
-# Simple config – you can make this a full config dialog later
-plugin_prefs = JSONConfig('plugins/calibre_book_sizer')
-plugin_prefs.setdefault('words_per_page', 300)
+PLUGIN_ICONS = ['images/book_sizer.png']
 
 import logging
 logger = logging.getLogger(__name__)
@@ -33,19 +32,14 @@ class BookSizerAction(InterfaceAction):
         Called by Calibre when the plugin is loaded.
         Set up the toolbar button and connect the signal.
         """
-        icon = QIcon(self.load_icon())
-        self.qaction.setIcon(icon)
+        icon_resources = self.load_resources(PLUGIN_ICONS)
+        set_plugin_icon_resources(self.name, icon_resources)
+        self.qaction.setIcon(get_icon(PLUGIN_ICONS[0]))
         self.qaction.triggered.connect(self.run)
 
-    def load_icon(self):
-        """
-        Load the plugin icon from the images folder in the ZIP.
-        """
-        # 'images/book_sizer.png' inside the plugin ZIP
-        return self.load_resources('images/book_sizer.png')
-
-
     def build_new_title(self, title:str, pages:int) -> str:
+        title = (re.sub(r' \[\d+\]$', '', title)).trim()
+        title = f"{title} [{str(pages)}]"
         return title
 
     def _run_inner(self):
@@ -73,8 +67,6 @@ class BookSizerAction(InterfaceAction):
                 show=True
             )
             return
-
-        #words_per_page = plugin_prefs['words_per_page']
 
         changed = 0
         for book_id in book_ids:

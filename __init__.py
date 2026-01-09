@@ -1,6 +1,6 @@
 from calibre.customize import InterfaceActionBase
 
-class CalibreBookSizerPlugin(InterfaceActionBase):
+class BookSizerPlugin(InterfaceActionBase):
     name                = 'Book Sizer'
     description         = 'Adds a size indicator (based on pagecount) to book titles using the #pages column.'
     supported_platforms = ['windows', 'osx', 'linux']
@@ -9,4 +9,4 @@ class CalibreBookSizerPlugin(InterfaceActionBase):
     minimum_calibre_version = (6, 0, 0)  # adjust if needed
 
     # This is the module path and class name of the actual plugin implementation.
-    actual_plugin       = 'action:BookSizerAction'
+    actual_plugin       = 'calibre_plugins.book_sizer.action:BookSizerAction'
