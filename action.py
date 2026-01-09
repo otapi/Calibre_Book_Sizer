@@ -1,26 +1,100 @@
 from calibre.gui2.actions import InterfaceAction
-from calibre.gui2 import error_dialog, info_dialog, question_dialog
+from calibre.gui2 import error_dialog, info_dialog
 from calibre_plugins.modify_epub.common_icons import set_plugin_icon_resources, get_icon
-from calibre.gui2 import open_url
 from calibre.utils.config import JSONConfig
 
 from PyQt5.Qt import QIcon
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 PLUGIN_ICONS = ['images/book_sizer.png']
 
-import logging
-logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Background job worker function
+# ---------------------------------------------------------------------------
+
+def do_book_sizer_job(book_ids, db_path, **kwargs):
+    """
+    Runs inside calibre's background job system.
+    Returns a dict: {book_id: new_title}
+    """
+    from calibre.library import db as db_module
+    import re
+
+    log = kwargs.get('log')          # progress + logging
+    abort = kwargs.get('abort')      # cancellation support (optional)
+    total = len(book_ids)
+    processed = 0
+
+    db = db_module(db_path)
+    results = {}
+
+    for book_id in book_ids:
+        processed += 1
+
+        # Allow user to cancel the job
+        if abort and abort.is_set():
+            if log:
+                log("Job aborted by user.")
+            break
+
+        # --- progress update ---
+        if log:
+            pct = int((processed / total) * 100)
+            log.report_progress(pct)
+
+        mi = db.get_metadata(book_id, index_is_id=True)
+
+        # --- log the title being processed ---
+
+        pages = mi.get('#pages', None)
+        if pages is None:
+            if log:
+                log(f"Skipped as page number is missing from #pages: {mi.title}")
+            continue
+
+        try:
+            pages = float(pages)
+        except Exception as r:
+            if log: 
+                log(f"Invalid #pages value for book ID {mi.title}: {pages}")
+            continue
+
+        if log: 
+           log(f"Processing {mi.title}: {pages}")
+
+        # Clean title
+        title = mi.title
+        title = (re.sub(r'\[\d+\]$', '', title)).strip()
+        title = (re.sub(r'[\x00-\x1F\x7F]', '', title))
+        title = (re.sub(r'[\u200B\u200C\u200D\uFEFF]', '', title))
+
+        new_title = f"{title} [{int(pages)}]"
+
+        if new_title != mi.title:
+            results[book_id] = new_title
+
+    return results
+
+
+
+
+# ---------------------------------------------------------------------------
+# Main plugin action
+# ---------------------------------------------------------------------------
 
 class BookSizerAction(InterfaceAction):
 
     name = 'Book Sizer'
-
-    # Icon, text, tooltip, and keyboard shortcut
-    # action_spec: (text, icon, tooltip, keyboard shortcut)
-
-    action_spec = (_('Book Sizer'), None, _('Add size indicator to titles of selected books'), ())
+    action_spec = (
+        _('Book Sizer'),
+        None,
+        _('Add size indicator to titles of selected books'),
+        ()
+    )
     action_type = 'current'
 
     def genesis(self):
@@ -33,20 +107,24 @@ class BookSizerAction(InterfaceAction):
         self.qaction.setIcon(get_icon(PLUGIN_ICONS[0]))
         self.qaction.triggered.connect(self.run)
 
-    def build_new_title(self, title:str, pages:int) -> str:
-        title = (re.sub(r'\[\d+\]$', '', title)).strip()
-        title = (re.sub(r'[\x00-\x1F\x7F]', '', title))
-        title = (re.sub(r'[\u200B\u200C\u200D\uFEFF]', '', title))
-        
-        title = f"{title} [{str(int(pages))}]"
-        return title
+    # ----------------------------------------------------------------------
 
-    def about_to_show_menu(self):
-        self.rebuild_menus()
-        
-    def _run_inner(self):
-        logger.info("Book Sizer triggered")
-        
+    def run(self, *args):
+        """
+        Execute the main plugin logic when the toolbar button is clicked.
+        """
+        try:
+            self._queue_job()
+        except Exception as e:
+            error_dialog(
+                self.gui, self.name,
+                f'An error occurred:\n{e}',
+                show=True
+            )
+
+    # ----------------------------------------------------------------------
+
+    def _queue_job(self):
         gui = self.gui
         db = gui.current_db
 
@@ -56,7 +134,6 @@ class BookSizerAction(InterfaceAction):
             info_dialog(gui, self.name, 'No books selected.', show=True)
             return
 
-        logger.info(f"Selected {len(rows)} book(s)")
         book_ids = [gui.library_view.model().id(r.row()) for r in rows]
 
         # Check that the #pages custom column exists
@@ -70,50 +147,52 @@ class BookSizerAction(InterfaceAction):
             )
             return
 
-        changed = 0
-        for book_id in book_ids:
-            logger.info(f"--------------------------------------------")
-            logger.info(f"Processing book ID {book_id}")
-            mi = db.get_metadata(book_id, index_is_id=True)
-
-            # Fetch the #pages value from the metadata
-            pages = mi.get('#pages', None)
-            if pages is None:
-                continue
-
-            try:
-                pages = float(pages)
-            except (TypeError, ValueError):
-                logger.info(f"Skipping book {book_id} due invalid #pages column: '{mi.title}'")
-                continue
-
-            logger.info(f"Updating title for book {book_id}: '{mi.title}'")
-            # Update the title
-            new_title = self.build_new_title(mi.title, pages)
-            if new_title != mi.title:
-                mi.title = new_title
-                db.set_metadata(book_id, mi)
-                changed += 1
-
-        gui.library_view.model().refresh_ids(book_ids)
-
-        info_dialog(
-            gui,
-            self.name,
-            f'Updated {changed} book title(s).',
-            show=True
+        # Queue background job
+        job = gui.job_manager.run_job(
+            self.Dispatcher(self._job_finished),
+            'arbitrary_n',
+            args=[
+                'calibre_plugins.book_sizer.action',  # module path
+                'do_book_sizer_job',                  # function name
+                (book_ids, db.library_path)           # arguments
+            ],
+            description=_('Updating book titles')
         )
 
-    def run(self, *args):
+        gui.status_bar.show_message(
+            _('Updating %d books…') % len(book_ids)
+        )
+
+    # ----------------------------------------------------------------------
+
+    def _job_finished(self, job):
         """
-        Execute the main plugin logic when the toolbar button is clicked.
+        Called when the background job completes.
         """
-        try:
-            self._run_inner()
-        except Exception as e:
-            # Show error dialog in Calibre
-            error_dialog(
-                self.gui, self.name,
-                f'An error occurred:\n{e}',
-                show=True
-            )
+        if job.failed:
+            return self.gui.job_exception(job, dialog_title=_('Book Sizer Failed'))
+
+        results = job.result  # {book_id: new_title}
+
+        if not results:
+            info_dialog(self.gui, self.name,
+                        'No titles needed updating.', show=True)
+            return
+
+        db = self.gui.current_db
+
+        # Apply metadata updates
+        for book_id, new_title in results.items():
+            mi = db.get_metadata(book_id, index_is_id=True)
+            mi.title = new_title
+            db.set_metadata(book_id, mi)
+
+        # Refresh GUI
+        self.gui.library_view.model().refresh_ids(list(results.keys()))
+
+        info_dialog(
+            self.gui,
+            self.name,
+            f'Updated {len(results)} book title(s).',
+            show=True
+        )
