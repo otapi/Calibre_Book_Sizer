@@ -4,7 +4,7 @@
     {
       "label": "Build Calibre Plugin ZIP",
       "type": "shell",
-      "command": "zip -r Calibre_Book_Sizer.zip __init__.py action.py plugin-import-name-book_sizer.txt images/ && cp -v Calibre_Book_Sizer.zip ~/.config/calibre/plugins/Calibre_Book_Sizer.zip",
+      "command": "zip -r Calibre_Book_Sizer.zip __init__.py action.py plugin-import-name-book_sizer.txt images/",
       "group": {
         "kind": "build",
         "isDefault": true

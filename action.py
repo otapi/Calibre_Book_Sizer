@@ -7,7 +7,6 @@ from calibre.utils.config import JSONConfig
 from PyQt5.Qt import QIcon
 import re
 
-PLUGIN_NAME = 'Book Sizer'
 PLUGIN_ICONS = ['images/book_sizer.png']
 
 import logging
@@ -16,16 +15,13 @@ logger = logging.getLogger(__name__)
 
 class BookSizerAction(InterfaceAction):
 
-    name = PLUGIN_NAME
+    name = 'Book Sizer'
 
     # Icon, text, tooltip, and keyboard shortcut
     # action_spec: (text, icon, tooltip, keyboard shortcut)
-    action_spec = (
-        'Book Sizer',
-        None,
-        'Add size indicator to titles of selected books',
-        None
-    )
+
+    action_spec = (_('Book Sizer'), None, _('Add size indicator to titles of selected books'), ())
+    action_type = 'current'
 
     def genesis(self):
         """
@@ -38,10 +34,16 @@ class BookSizerAction(InterfaceAction):
         self.qaction.triggered.connect(self.run)
 
     def build_new_title(self, title:str, pages:int) -> str:
-        title = (re.sub(r' \[\d+\]$', '', title)).trim()
-        title = f"{title} [{str(pages)}]"
+        title = (re.sub(r'\[\d+\]$', '', title)).strip()
+        title = (re.sub(r'[\x00-\x1F\x7F]', '', title))
+        title = (re.sub(r'[\u200B\u200C\u200D\uFEFF]', '', title))
+        
+        title = f"{title} [{str(int(pages))}]"
         return title
 
+    def about_to_show_menu(self):
+        self.rebuild_menus()
+        
     def _run_inner(self):
         logger.info("Book Sizer triggered")
         
@@ -51,17 +53,17 @@ class BookSizerAction(InterfaceAction):
         # Get selected book ids
         rows = gui.library_view.selectionModel().selectedRows()
         if not rows:
-            info_dialog(gui, PLUGIN_NAME, 'No books selected.', show=True)
+            info_dialog(gui, self.name, 'No books selected.', show=True)
             return
 
         logger.info(f"Selected {len(rows)} book(s)")
         book_ids = [gui.library_view.model().id(r.row()) for r in rows]
 
         # Check that the #pages custom column exists
-        custom_cols = db.custom_column_labels()
-        if 'pages' not in custom_cols:
+        custom_cols = db.field_metadata.custom_field_metadata()
+        if '#pages' not in custom_cols:
             error_dialog(
-                gui, PLUGIN_NAME,
+                gui, self.name,
                 'Custom column "#pages" not found.\n'
                 'Please create a custom column with label "pages" and fill it using the Count Pages plugin.',
                 show=True
@@ -97,7 +99,7 @@ class BookSizerAction(InterfaceAction):
 
         info_dialog(
             gui,
-            PLUGIN_NAME,
+            self.name,
             f'Updated {changed} book title(s).',
             show=True
         )
@@ -111,7 +113,7 @@ class BookSizerAction(InterfaceAction):
         except Exception as e:
             # Show error dialog in Calibre
             error_dialog(
-                self.gui, PLUGIN_NAME,
+                self.gui, self.name,
                 f'An error occurred:\n{e}',
                 show=True
             )
